@@ -1,0 +1,411 @@
+---
+title: "Prediction of Blood Transfusion"
+author: "AKALU DESTA TEKLU "
+date: "2023-04-08"
+output: html_document
+---
+
+# Abstract
+
+The purpose of this report is to present the results of the analysis and prediction of the blood transfusion dataset in R. The dataset consists of data related to blood donation behavior of donors, and we will use classification models to predict if a donor will donate blood again. Before building the prediction models, we explored the dataset to gain insights into the data. 
+The dataset has 748 observations and 5 variables.
+The response variable is "Donated", which indicates if a donor donated blood in March 2007. The predictors are "Recency", "Frequency", "Monetary" and "Time" which represent the number of months since the last donation, the number of times the donor has donated blood, the total amount of blood donated in c.c. and the number of months since the first donation, respectively.Before building the models, we split the dataset into training and testing sets with a 80:20 ratio, and we performed some data preprocessing steps.We built various classification models on the training set. We evaluated the models on the testing set using the accuracy metric. The Support vector machine model achieved the highest accuracy of 80.54 % and sensitivity of 96.49%, which indicates that it has good predictive power. 
+
+## 1.Loading the Blood transfusion dataset
+
+```{r}
+library(readr)
+library(neuralnet)
+library(mlbench)
+library("dplyr")
+library(tidyverse)
+library(caret)
+library(lattice)
+library(corrplot)
+library(ggplot2)
+library(randomForest)
+
+blood <- read.csv("https://archive.ics.uci.edu/ml/machine-learning-databases/blood-transfusion/transfusion.data")
+dataset<-blood
+colnames(dataset) <- c("Recency", "Frequency", "Monetary", "Time", "Donated")
+dataset$Donated <- factor(dataset$Donated, levels = c(0, 1), labels = c("Not Donated", "Donated"))
+target<-dataset$Donated
+```
+
+## 2.Data preparation
+
+This step is about preparing the data in such a way that it best exposes the structure of the problem and the relationships between your input attributes with the output variable.
+
+### 2.1. Checking missing values and cleaning the data
+
+```{r}
+#Checking the number of missing value(NA)
+numberOfNA <- length(which(is.na(dataset)==TRUE))
+if(numberOfNA>0) {
+  dataset <- housing[complete.cases(dataset),]
+}
+
+sum(complete.cases(dataset))
+```
+
+However, there are no missing values in this dataset as shown below.
+
+### 2.2. Descriptive statistics
+
+```{r}
+
+#Structure of the dataset
+
+str(dataset)
+
+#Showing the dimension of the data set
+
+dim(dataset)
+
+#Listing the first six rows of the dataset
+
+head(dataset)
+
+#List the types of each attributes
+
+sapply(dataset, class)
+
+```
+
+We can see that  all  of the attributes are numeric. so the no variable  needs transformation.
+
+```{r}
+# summarize attribute distributions
+
+summary(dataset)
+```
+
+## 3. Exploratory Data Analysis
+
+Exploratory Data Analysis is a very important step before training the model. In this section, we will use some visualizations to understand the relationship of the target variable with other features as well as the correlation between the each input attributes.
+
+```{r}
+
+#Correlation between input variables
+cor(dataset[,1:4])
+```
+### 3.1 Uni modal Data Visualization
+
+Let’s look at visualizations of individual input attributes.
+
+```{r}
+# histograms each attribute
+par(mfrow=c(2,2))
+for(j in 1:4) {
+hist.default(dataset[,j], main=names(dataset)[j])
+}
+```
+
+
+```{r}
+
+# density plot for each attribute
+
+par(mfrow=c(2,2))
+for(j in 1:4) {
+plot(density(dataset[,j]), main=names(dataset)[j])
+}
+```
+
+
+```{r}
+# Box plots for each attribute
+
+par(mfrow=c(2,2))
+for(j in 1:4) {
+boxplot(dataset[,j], main=names(dataset)[j])
+}
+```
+
+### 3.2 Multi modal Data Visualization
+
+Let’s look at some visualizations of the interactions between variables
+
+```{r}
+
+# scatterplot matrix
+
+pairs(dataset[,1:4])
+```
+
+We can see that some of the correlated attributes do show good structure in their relationship.
+
+```{r}
+
+# Input variables correlation plot
+
+correlations <- cor(dataset[,1:4])
+corrplot(correlations, method="circle")
+```
+
+The larger darker blue dots confirm the positively correlated attributes.As we can only frequency and monetary have higher positive correlation.
+
+```{r}
+
+#Density plot of the target variable(whether he/she donated blood in March 2007)
+
+dataset%>% 
+  ggplot(aes(Donated)) +
+  stat_density() + 
+  theme_bw()
+
+```
+Now we can look at the interactions between the variables. First let’s look at scatterplots of all pairs of attributes and color the points by class. In addition, because the scatterplots show that points for each class are generally separate, we can draw ellipses around them
+
+```{r}
+
+# The correlation between target variable and input features 
+# split input and output
+
+x <- dataset[,1:4]
+y <- dataset[,5]
+
+# scatterplot matrix
+
+featurePlot(x=x, y=y, plot="ellipse")
+
+```
+
+We can see some clear relationships between the input attributes and between attributes and the target attributes (ellipses):
+```{r}
+# box and whisker plots for each attribute
+
+featurePlot(x=x, y=y, plot="box")
+
+```
+
+```{r}
+
+# density plots for each attribute by class value
+
+scales <- list(x=list(relation="free"), y=list(relation="free"))
+featurePlot(x=x, y=y, plot="density", scales=scales)
+
+```
+
+As we can see, it describes how the target feature of Blood transfusion varies with the different features.
+
+## 4. Data Division
+
+```{r}
+
+# Split out  dataset into training and testing
+# create a list of 80% of the rows in the original dataset we can use for training
+
+set.seed(1)
+
+trainIndex <- caret::createDataPartition(dataset$Donated, p=0.80, list=FALSE)
+
+# select 20% of the data for validation
+
+testing <- dataset[-trainIndex,]
+# use the remaining 80% of data to training and testing the models
+
+training <- dataset[trainIndex,]
+head(training)
+```
+
+We split the dataset into training and testing sets. We train the model with 80% of the samples and test with the remaining 20%. 
+
+## 5.Cross-Validation
+
+```{r}
+
+# defining training control as  repeated cross-validation and value of K is 10 and repetition is 3 times
+
+trainCrl <- caret::trainControl(method="repeatedcv", number=10, repeats=3)
+metric<-"Accuracy"
+```
+
+We can see 10-fold cross validation (each fold will be about 360 instances for training and 40 for test) with 3 repeats.
+
+## 6. Modeling
+
+```{r}
+
+# GLMNET
+
+set.seed(1)
+fit.glmnet <- caret::train(Donated~., data=training, method="glmnet", metric=metric, trControl=trainCrl)
+
+# KNN
+
+set.seed(1)
+fit.knn <- caret::train(Donated~., data=training, method="knn", metric=metric, trControl=trainCrl)
+
+# CART
+
+set.seed(1)
+fit.cart <- caret::train(Donated~., data=training, method="rpart", metric=metric, trControl=trainCrl)
+
+# SVM
+set.seed(1)
+fit.svm <- caret::train(Donated~., data=training, method="svmRadial", metric=metric, trControl=trainCrl)
+
+# Random Forest
+
+set.seed(1)
+fit.rf <- caret::train(Donated~., data=training, method="rf", metric=metric,  trControl=trainCrl)
+
+# Compare algorithms
+
+results <- resamples(list( GLMNET=fit.glmnet, KNN=fit.knn,
+CART=fit.cart,SVM=fit.svm, RF=fit.rf))
+summary(results)
+dotplot(results)
+```
+
+We can see good accuracy across the board. All algorithms have a mean accuracy above 74%. We can see that SVM has  (77.8%) accuracy, CART ( 77.14%), GLMNET was 77.13%), RF (74.06%) and KNN (75.62%).
+
+### 6.1. Box-Cox Transform
+
+We know we have some skewed distributions. There are transform methods that we can use to adjust and normalize these distributions. A favorite for positive input attributes (which we have in this case) is the Box-Cox transform. In this section we evaluate the same four algorithms as above except this time the data is transformed using a Box-Cox power transform to flatten
+out the distributions.
+
+```{r}
+
+# GLMNET
+
+set.seed(1)
+fit.glmnet <- caret::train(Donated~., data=training, method="glmnet", preProc=c("BoxCox"), metric=metric, trControl=trainCrl)
+
+# KNN
+
+set.seed(1)
+fit.knn <- caret::train(Donated~., data=training, method="knn", metric=metric, preProc=c("BoxCox"), trControl=trainCrl)
+
+# CART
+
+set.seed(1)
+fit.cart <- caret::train(Donated~., data=training, method="rpart", metric=metric, preProc=c("BoxCox"), trControl=trainCrl)
+
+# SVM
+set.seed(1)
+fit.svm <- caret::train(Donated~., data=training, method="svmRadial", metric=metric, preProc=c("BoxCox"), trControl=trainCrl)
+
+# Random Forest
+
+set.seed(1)
+fit.rf <- caret::train(Donated~., data=training, method="rf", metric=metric, preProc=c("BoxCox"), trControl=trainCrl)
+
+# Compare algorithms
+
+transformResults <- resamples(list( GLMNET=fit.glmnet, KNN=fit.knn,
+CART=fit.cart,SVM=fit.svm, RF=fit.rf ))
+summary(transformResults)
+dotplot(transformResults)
+```
+
+We can see that the accuracy of the previous best algorithm GLMNET was elevated to 78.36%. We have a new ranking, showing SVM with the most accurate mean accuracy at 78.86%.
+
+### 6.2. Tuning Algorithm 
+
+Let’s try some tuning of the top algorithms, specifically SVM and see if we can lift the accuracy.The SVM implementation has two parameters that we can tune with caret package. The sigma which is a smoothing term, and C which is a cost constraint.
+
+
+```{r}
+
+# look at parameters used for random forest tuning and SVM
+
+print(fit.rf)
+print(fit.svm)
+
+# SVM
+set.seed(1)
+
+grid <- expand.grid(.sigma=0.4740742, .C=seq(1, 10, by=1))
+fit.svm <- caret::train(Donated~., data=training, method="svmRadial", tuneGrid=grid, metric=metric, preProc=c("BoxCox"), trControl=trainCrl)
+print(fit.svm)
+plot(fit.svm)
+
+
+control <- trainControl(method='repeatedcv',number=10, repeats=3, 
+                        search='grid')
+metric <- "Accuracy"
+
+set.seed(1)
+
+#create tunegrid with 2 values from 1:2 for mtry to tunning model. 
+
+grid <- expand.grid(.mtry = (1:2))
+tune.rf <- caret::train(Donated~., data=training, method="rf", metric=metric,preProc=c("BoxCox"), tuneGrid=grid, trControl=control)
+print(tune.rf)
+plot(tune.rf)
+
+```
+
+
+We can see that we have achieved a more accurate model using tuning of algorithm for SVM and Random forest.
+
+### 6.2. Predicting the target variable
+
+```{r}
+
+# transform the training dataset using Box-Cox transform
+
+library(e1071)
+
+set.seed(1)
+
+x <- training[,1:4]
+y <- training[,5]
+preproc <- preProcess(x, method=c("BoxCox"))
+transX <- predict(preproc, x)
+
+# train the final model
+finalModel <- svm(x=transX, y=y)
+summary(finalModel)
+
+# transform the testing dataset using Box-Cox transform
+set.seed(1)
+valX <- testing[,1:4]
+trans_valX <- predict(preproc, valX)
+valY <- testing[,5]
+
+# use final model to make predictions on the testing dataset
+
+predictions <- predict(finalModel, newdata=trans_valX)
+
+# computing model performance metrics
+confusionMatrix(predictions,valY)
+```
+
+
+
+## 7. Artificial Neural network
+
+```{r}
+
+# Define the neural network architecture
+
+apply(dataset, 2, function(x) sum(is.na(x)))
+index <- sample(1 : nrow(dataset),
+                round(0.8 * nrow(dataset)))
+train <- dataset[index, ]
+test <- dataset[-index, ]
+
+ 
+# Applying Neural network concepts
+library(neuralnet)
+n <- names(train)
+f <- as.formula(paste("Donated ~",
+                       paste(n[!n %in% "Donated"],
+                       collapse = " + ")))
+nn <- neuralnet(f, data = train,
+                   hidden = c(4, 2),
+                   linear.output = F, stepmax = 1e6)
+
+
+# Plotting the graph
+#plot(nn)
+
+```
+
+# Conclusion
+
+In conclusion, we analyzed and predicted the blood transfusion dataset using different classification models in R. The Support vector machine model achieved the highest accuracy of 80.54 %, which indicates that it is a good model for predicting if a donor will donate blood again. Furthermore, artificial neural network is implemented to predict the performance of the model.
